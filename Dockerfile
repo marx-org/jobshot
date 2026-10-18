@@ -1,5 +1,5 @@
 # Use official Node.js 22 LTS image for compatibility with Vite plugin
-FROM node:22-alpine
+FROM public.ecr.aws/docker/library/node:22-alpine
 
 # Set working directory
 WORKDIR /app
