@@ -1,5 +1,10 @@
 # Use official Node.js 22 LTS image for compatibility with Vite plugin
+# syntax=docker/dockerfile:1
+
 FROM public.ecr.aws/docker/library/node:22-alpine
+
+ARG APP_VERSION=""
+LABEL org.opencontainers.image.version="${APP_VERSION}"
 
 # Set working directory
 WORKDIR /app
