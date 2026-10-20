@@ -1,23 +1,5 @@
 import React, {useEffect, useRef, useState} from 'react';
 import type {Job} from './configLoader';
-// Local fallback for JSX intrinsic elements (tooling quirk)
-declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      div: any;
-      span: any;
-      h2: any;
-      button: any;
-      form: any;
-      input: any;
-      fieldset: any;
-      legend: any;
-      label: any;
-      textarea: any;
-      p: any;
-    }
-  }
-}
 
 interface JobRunModalProps {
   job: Job;
