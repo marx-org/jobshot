@@ -3,15 +3,15 @@ name: Build
 on:
   workflow_dispatch:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
-    branches: [master]
+    branches: [main]
 
 jobs:
   image:
     uses: marx-org/pfire-workflows/.github/workflows/docker-image.yml@776b87d7f227954ac4301a69d41ef8783bc9bb33
     with:
-      release_branch: master
+      release_branch: main
     secrets: inherit
     permissions:
       contents: write
