@@ -1,5 +1,6 @@
 import express from 'express';
 import bodyParser from 'body-parser';
+import {rateLimit} from 'express-rate-limit';
 import path from 'path';
 import {fileURLToPath} from 'url';
 import {
@@ -10,7 +11,7 @@ import {
 } from '@kubernetes/client-node';
 import dotenv from 'dotenv';
 import fs from 'fs';
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 
 dotenv.config();
 
@@ -20,28 +21,30 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const port = process.env.PORT || 3000;
 
+// Protect every route, including static file reads and the SPA fallback, from
+// unbounded requests. The endpoint-specific limiters below retain the stricter
+// limits needed for operations that contact the Kubernetes API.
+const requestRateLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 120,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+});
+const runJobRateLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 20,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+});
+const jobStatusRateLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 60,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+});
+
+app.use(requestRateLimiter);
 app.use(bodyParser.json());
-
-const rateLimitBuckets = new Map();
-
-function rateLimit(maxRequests, windowMs) {
-  return (req, res, next) => {
-    const key = req.socket.remoteAddress || 'unknown';
-    const now = Date.now();
-    const bucket = rateLimitBuckets.get(key);
-    if (!bucket || now - bucket.startedAt >= windowMs) {
-      rateLimitBuckets.set(key, {startedAt: now, count: 1});
-      next();
-      return;
-    }
-    if (bucket.count >= maxRequests) {
-      res.status(429).json({error: 'Too many requests'});
-      return;
-    }
-    bucket.count += 1;
-    next();
-  };
-}
 
 // Serve static files from dist (React build)
 app.use(express.static(path.join(__dirname, 'dist')));
@@ -419,7 +422,7 @@ function logClusterClientDetails(kc, token) {
   console.log(authDetails);
 }
 
-app.post('/api/run-job', rateLimit(20, 60_000), async (req, res) => {
+app.post('/api/run-job', runJobRateLimiter, async (req, res) => {
   const job = req.body;
   const {apiServer, token} = getK8sConfig();
   let namespace = job.namespace || 'default';
@@ -449,7 +452,7 @@ app.post('/api/run-job', rateLimit(20, 60_000), async (req, res) => {
   }
 });
 
-app.get('/api/job-status/:jobName', rateLimit(60, 60_000), async (req, res) => {
+app.get('/api/job-status/:jobName', jobStatusRateLimiter, async (req, res) => {
   const {jobName} = req.params;
   const namespace = req.query.namespace || 'default';
 
