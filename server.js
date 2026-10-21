@@ -22,6 +22,27 @@ const port = process.env.PORT || 3000;
 
 app.use(bodyParser.json());
 
+const rateLimitBuckets = new Map();
+
+function rateLimit(maxRequests, windowMs) {
+  return (req, res, next) => {
+    const key = req.socket.remoteAddress || 'unknown';
+    const now = Date.now();
+    const bucket = rateLimitBuckets.get(key);
+    if (!bucket || now - bucket.startedAt >= windowMs) {
+      rateLimitBuckets.set(key, {startedAt: now, count: 1});
+      next();
+      return;
+    }
+    if (bucket.count >= maxRequests) {
+      res.status(429).json({error: 'Too many requests'});
+      return;
+    }
+    bucket.count += 1;
+    next();
+  };
+}
+
 // Serve static files from dist (React build)
 app.use(express.static(path.join(__dirname, 'dist')));
 
@@ -153,37 +174,14 @@ async function checkExistingJob(batchApi, namespace, jobName) {
       labelSelector: `jobshot/name=${jobName}`
     });
 
-    console.log(`DEBUG: Raw response type:`, typeof jobsResp);
-    console.log(`DEBUG: Response keys:`, Object.keys(jobsResp || {}));
-    console.log(`DEBUG: Response body type:`, typeof jobsResp?.body);
-    console.log(`DEBUG: Response body keys:`,
-        Object.keys(jobsResp?.body || {}));
-
     // Handle different response structures - sometimes data is in body, sometimes directly in response
     const jobList = jobsResp.body || jobsResp;
-    console.log(`DEBUG: Job list type:`, typeof jobList);
-    console.log(`DEBUG: Job list keys:`, Object.keys(jobList || {}));
-    console.log(`DEBUG: Job list items type:`, typeof jobList?.items);
-    console.log(`DEBUG: Job list items length:`, jobList?.items?.length);
-
     const jobs = jobList?.items || [];
-    console.log(
-        `DEBUG: Found ${jobs.length} jobs matching labelSelector "jobshot/name=${jobName}"`);
-
-    if (jobs.length > 0) {
-      console.log(`DEBUG: First job metadata:`, jobs[0]?.metadata);
-      console.log(`DEBUG: First job status:`, jobs[0]?.status);
-    }
 
     return jobs.length > 0 ? jobs[0] : null;
   } catch (err) {
     // If job doesn't exist or other error, return null
-    console.error(`DEBUG: Error checking for existing job ${jobName}:`, {
-      message: err.message,
-      code: err.code,
-      statusCode: err.statusCode,
-      body: err.body
-    });
+    console.error('Error checking for existing job');
     return null;
   }
 }
@@ -197,9 +195,9 @@ async function deleteJob(batchApi, namespace, jobName) {
         propagationPolicy: 'Background'
       }
     });
-    console.log(`Deleted job: ${jobName}`);
+    console.log('Deleted job');
   } catch (err) {
-    console.warn(`Could not delete job ${jobName}:`, err.message);
+    console.warn('Could not delete job');
     throw err;
   }
 }
@@ -421,7 +419,7 @@ function logClusterClientDetails(kc, token) {
   console.log(authDetails);
 }
 
-app.post('/api/run-job', async (req, res) => {
+app.post('/api/run-job', rateLimit(20, 60_000), async (req, res) => {
   const job = req.body;
   const {apiServer, token} = getK8sConfig();
   let namespace = job.namespace || 'default';
@@ -436,25 +434,22 @@ app.post('/api/run-job', async (req, res) => {
     const kc = buildK8sClient();
     const connError = await validateK8sConnectivity(kc, namespace);
     if (connError) {
-      console.error('Connectivity validation failed:', connError);
-      res.status(400).send(connError);
+      console.error('Connectivity validation failed');
+      res.status(400).json({error: 'Kubernetes connectivity validation failed'});
       return;
     }
 
-    console.log('Received job namespace:', namespace);
-    console.log('Token:', token ? '[REDACTED]' : 'undefined');
     logClusterClientDetails(kc, token);
-    console.log('Full job object:', job);
 
     const jobName = await runK8sJob(kc, namespace, job);
     res.status(200).json({message: 'Job started', jobName, namespace});
   } catch (err) {
-    console.error('Job start error:', err);
-    res.status(500).send(`Failed to start job: ${err}`);
+    console.error('Job start error');
+    res.status(500).json({error: 'Failed to start job'});
   }
 });
 
-app.get('/api/job-status/:jobName', async (req, res) => {
+app.get('/api/job-status/:jobName', rateLimit(60, 60_000), async (req, res) => {
   const {jobName} = req.params;
   const namespace = req.query.namespace || 'default';
 
@@ -484,8 +479,8 @@ app.get('/api/job-status/:jobName', async (req, res) => {
       }
     });
   } catch (err) {
-    console.error('Job status error:', err);
-    res.status(500).json({error: `Failed to get job status: ${err.message}`});
+    console.error('Job status error');
+    res.status(500).json({error: 'Failed to get job status'});
   }
 });
 
@@ -496,8 +491,7 @@ app.get('/api/jobs', (req, res) => {
     const jobsConfig = yaml.load(yamlText);
     res.json(jobsConfig);
   } catch (err) {
-    res.status(500).json(
-        {error: 'Failed to load jobs.yaml', details: String(err)});
+    res.status(500).json({error: 'Failed to load jobs.yaml'});
   }
 });
 
@@ -509,11 +503,11 @@ app.use((req, res, next) => {
   }
 });
 
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection:', reason);
+process.on('unhandledRejection', () => {
+  console.error('Unhandled Rejection');
 });
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err);
+process.on('uncaughtException', () => {
+  console.error('Uncaught Exception');
 });
 
 app.listen(port, () => {
