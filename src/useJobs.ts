@@ -7,6 +7,7 @@ export function useJobs() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const intervalRef = useRef<number | null>(null);
+  const jobsRef = useRef<Job[]>([]);
 
   const fetchJobStatus = useCallback(async (job: Job): Promise<JobStatus> => {
     try {
@@ -43,12 +44,14 @@ export function useJobs() {
     });
 
     const updatedJobs = await Promise.all(statusPromises);
+    jobsRef.current = updatedJobs;
     setJobs(updatedJobs);
   }, [fetchJobStatus]);
 
   useEffect(() => {
     loadJobsConfig()
     .then(config => {
+      jobsRef.current = config.jobs;
       setJobs(config.jobs);
       setLoading(false);
     })
@@ -60,9 +63,11 @@ export function useJobs() {
 
   // Fetch job statuses after jobs are loaded
   useEffect(() => {
-    if (!loading && jobs.length > 0) {
-      // Initial status fetch
-      updateJobStatuses(jobs);
+    if (!loading && jobsRef.current.length > 0) {
+      // Defer the initial status fetch until after the effect completes.
+      const initialFetch = window.setTimeout(() => {
+        void updateJobStatuses(jobsRef.current);
+      }, 0);
 
       // Clear existing interval
       if (intervalRef.current) {
@@ -70,21 +75,19 @@ export function useJobs() {
       }
 
       // Set up periodic status updates every 5 seconds
-      intervalRef.current = setInterval(() => {
-        setJobs(currentJobs => {
-          updateJobStatuses(currentJobs);
-          return currentJobs;
-        });
+      intervalRef.current = window.setInterval(() => {
+        void updateJobStatuses(jobsRef.current);
       }, 5000);
 
       return () => {
+        window.clearTimeout(initialFetch);
         if (intervalRef.current) {
-          clearInterval(intervalRef.current);
+          window.clearInterval(intervalRef.current);
           intervalRef.current = null;
         }
       };
     }
-  }, [loading, jobs.length, updateJobStatuses, jobs]);
+  }, [loading, jobs.length, updateJobStatuses]);
 
   const runJob = async (job: Job) => {
     try {
@@ -103,14 +106,11 @@ export function useJobs() {
       setTimeout(() => updateJobStatuses(jobs), 1000);
     } catch (err) {
       // Show backend error message clearly
-      let message = '';
-      if (err instanceof Error) {
-        message = err.message;
-      } else if (typeof err === 'string') {
-        message = err;
-      } else {
-        message = 'Unknown error';
-      }
+      const message = err instanceof Error
+        ? err.message
+        : typeof err === 'string'
+          ? err
+          : 'Unknown error';
       alert(`Failed to start job: ${message}`);
     }
   };
